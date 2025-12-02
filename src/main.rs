@@ -72,4 +72,7 @@ enum Error {
 
     #[error("Linux I2C error: {0}")]
     I2CError(#[from] i2cdev::linux::LinuxI2CError),
+
+    #[error("IOCTL error: {0}")]
+    IoctlError(std::io::Error),
 }

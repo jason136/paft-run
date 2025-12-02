@@ -8,7 +8,7 @@ use tokio::time::sleep;
 
 use crate::Error;
 
-const I2C_SLAVE: u64 = 0x0703;
+const I2C_SLAVE: u16 = 0x0703;
 const LSM9DS1_ADDRESS: u16 = 0x6A;
 
 const LSM9DS1_CTRL_REG4: u8 = 0x1E;
@@ -24,10 +24,16 @@ const LSM6DSL_OUTX_L_G: u8 = 0x22;
 pub async fn i2c_imu() -> Result<(), Error> {
     let mut dev = LinuxI2CDevice::new("/dev/i2c-1", I2C_SLAVE)?;
 
-    let result = unsafe { libc::ioctl(dev.as_raw_fd(), I2C_SLAVE, LSM9DS1_ADDRESS as libc::c_int) };
+    let result = unsafe {
+        libc::ioctl(
+            dev.as_raw_fd(),
+            I2C_SLAVE as u64,
+            LSM9DS1_ADDRESS as libc::c_int,
+        )
+    };
 
     if result < 0 {
-        return Err(Error::from(std::io::Error::last_os_error()));
+        return Err(Error::IoctlError(std::io::Error::last_os_error()));
     }
 
     // Enable the accelerometer
@@ -62,6 +68,4 @@ pub async fn i2c_imu() -> Result<(), Error> {
 
         sleep(Duration::from_millis(100)).await;
     }
-
-    Ok(())
 }
