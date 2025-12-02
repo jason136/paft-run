@@ -1,9 +1,13 @@
-use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::{
+    traits::{DeviceTrait, StreamTrait},
+    Stream,
+};
 use flume::Receiver;
 use ndarray::{s, Array2, Array3, Axis};
 use ort::{
     execution_providers::QNNExecutionProvider,
     session::{builder::GraphOptimizationLevel, Session},
+    value::Value,
 };
 use ringbuf::{
     traits::{Consumer, Producer, Split},
@@ -24,14 +28,12 @@ const CHUNK_LENGTH: usize = 30; // seconds
 const N_SAMPLES: usize = CHUNK_LENGTH * SAMPLE_RATE as usize; // 30 seconds of audio
 
 // Decoder constants
-const N_TEXT_CTX: usize = 448;
 const SOT_TOKEN: i64 = 50258;
 const EOT_TOKEN: i64 = 50257;
 const TRANSCRIBE_TOKEN: i64 = 50359;
 const NO_TIMESTAMPS_TOKEN: i64 = 50363;
 const ENGLISH_TOKEN: i64 = 50259;
 
-/// Whisper ONNX model wrapper
 struct WhisperModel {
     encoder: Session,
     decoder: Session,
@@ -88,21 +90,27 @@ impl WhisperModel {
     }
 
     /// Run encoder on mel spectrogram features
-    fn encode(&self, mel: Array2<f32>) -> Result<Array3<f32>, Error> {
+    fn encode(&mut self, mel: Array2<f32>) -> Result<Array3<f32>, Error> {
         // Reshape mel to [1, n_mels, time_steps]
         let mel_3d = mel.insert_axis(Axis(0));
 
         info!("Running encoder with input shape: {:?}", mel_3d.shape());
 
-        let outputs = self.encoder.run(ort::inputs![mel_3d])?;
-        let audio_features = outputs[0].try_extract_tensor::<f32>()?;
+        let outputs = self.encoder.run(ort::inputs![Value::from_array(mel_3d)?])?;
+        let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
 
-        Ok(audio_features.view().to_owned().into_dimensionality()?)
+        // Convert to ndarray with proper shape
+        let audio_features = Array3::from_shape_vec(
+            (shape[0] as usize, shape[1] as usize, shape[2] as usize),
+            data.to_vec(),
+        )?;
+
+        Ok(audio_features)
     }
 
     /// Run decoder to generate tokens
     fn decode(
-        &self,
+        &mut self,
         audio_features: &Array3<f32>,
         tokens: &[i64],
     ) -> Result<(Vec<f32>, i64), Error> {
@@ -110,15 +118,20 @@ impl WhisperModel {
         let tokens_array = Array2::from_shape_vec((1, tokens.len()), tokens.to_vec())?;
 
         let outputs = self.decoder.run(ort::inputs![
-            "audio_features" => audio_features.view(),
-            "tokens" => tokens_array.view(),
-        ]?)?;
+            "audio_features" => Value::from_array(audio_features.clone())?,
+            "tokens" => Value::from_array(tokens_array)?,
+        ])?;
 
-        let logits = outputs[0].try_extract_tensor::<f32>()?;
-        let logits_view = logits.view();
+        let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+
+        // Convert to ndarray with proper shape
+        let logits = Array3::from_shape_vec(
+            (shape[0] as usize, shape[1] as usize, shape[2] as usize),
+            data.to_vec(),
+        )?;
 
         // Get logits for the last token
-        let last_token_logits = logits_view.slice(s![0, -1, ..]).to_owned();
+        let last_token_logits = logits.slice(s![0, -1, ..]).to_owned();
 
         // Find the token with highest probability
         let next_token = last_token_logits
@@ -132,7 +145,7 @@ impl WhisperModel {
     }
 
     /// Transcribe audio samples
-    fn transcribe(&self, audio: &[f32]) -> Result<String, Error> {
+    fn transcribe(&mut self, audio: &[f32]) -> Result<String, Error> {
         info!("Transcribing {} samples...", audio.len());
 
         // Convert audio to mel spectrogram
@@ -177,8 +190,6 @@ impl WhisperModel {
 
 /// Convert audio samples to mel spectrogram
 fn audio_to_mel_spectrogram(audio: &[f32]) -> Result<Array2<f32>, Error> {
-    let n_frames = (audio.len() - N_FFT) / HOP_LENGTH + 1;
-
     // Pad or truncate audio to expected length
     let mut padded_audio = audio.to_vec();
     if padded_audio.len() < N_SAMPLES {
@@ -238,7 +249,6 @@ fn audio_to_mel_spectrogram(audio: &[f32]) -> Result<Array2<f32>, Error> {
 
 /// Convert spectrogram to mel scale (simplified linear approximation)
 fn spectrogram_to_mel(spec: &Array2<f32>) -> Result<Array2<f32>, Error> {
-    let n_fft = (spec.shape()[0] - 1) * 2;
     let n_frames = spec.shape()[1];
 
     // Create mel filterbank (simplified)
@@ -271,7 +281,7 @@ pub fn whisper_realtime(
     decoder_path: &str,
     tokenizer_path: &str,
     audio_device: cpal::Device,
-) -> Result<Receiver<String>, Error> {
+) -> Result<(Receiver<String>, Stream), Error> {
     let config = audio_device.default_input_config()?;
     info!("Default input config: {:?}", config);
 
@@ -280,8 +290,6 @@ pub fn whisper_realtime(
         sample_rate: cpal::SampleRate(SAMPLE_RATE),
         buffer_size: cpal::BufferSize::Default,
     };
-
-    // let (audio_sender, audio_receiver) = flume::unbounded();
 
     let buffer = HeapRb::new(N_SAMPLES);
     let (mut audio_producer, mut audio_consumer) = buffer.split();
@@ -297,8 +305,6 @@ pub fn whisper_realtime(
         None,
     )?;
 
-    let model = WhisperModel::new(encoder_path, decoder_path, tokenizer_path)?;
-
     stream.play()?;
 
     let (audio_chunk_sender, audio_chunk_receiver) = flume::unbounded();
@@ -310,7 +316,7 @@ pub fn whisper_realtime(
             audio_consumer.peek_slice(&mut chunk);
 
             if chunk.iter().map(|x| x * x).sum::<f32>() > 100.0 {
-                audio_chunk_sender.send(chunk.clone());
+                let _ = audio_chunk_sender.send(chunk.clone());
                 audio_consumer.clear();
             }
 
@@ -320,11 +326,13 @@ pub fn whisper_realtime(
 
     let (text_sender, text_receiver) = flume::unbounded();
 
+    let mut model = WhisperModel::new(encoder_path, decoder_path, tokenizer_path)?;
+
     tokio::task::spawn_blocking(move || {
         while let Ok(chunk) = audio_chunk_receiver.recv() {
             match model.transcribe(&chunk) {
                 Ok(text) => {
-                    text_sender.send(text);
+                    let _ = text_sender.send(text);
                     continue;
                 }
                 Err(e) => warn!("Error transcribing chunk: {}", e),
@@ -334,5 +342,5 @@ pub fn whisper_realtime(
 
     info!("Audio stream started");
 
-    Ok(text_receiver)
+    Ok((text_receiver, stream))
 }
