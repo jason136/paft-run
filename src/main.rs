@@ -1,4 +1,3 @@
-use cpal::traits::HostTrait;
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -15,7 +14,7 @@ async fn main() -> Result<(), Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tokio::spawn(i2c_imu()).await?;
+    tokio::spawn(i2c_imu()).await??;
 
     Ok(())
 
@@ -46,6 +45,9 @@ async fn main() -> Result<(), Error> {
 
 #[derive(thiserror::Error, Debug)]
 enum Error {
+    #[error("Task join error: {0}")]
+    Join(#[from] tokio::task::JoinError),
+
     #[error("ONNX Runtime error: {0}")]
     OnnxRuntime(#[from] ort::Error),
 

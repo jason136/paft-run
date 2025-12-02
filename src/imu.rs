@@ -2,7 +2,7 @@ use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
 use i2cdev::core::I2CDevice;
-use i2cdev::linux::{LinuxI2CDevice, LinuxI2C};
+use i2cdev::linux::LinuxI2CDevice;
 use nix::libc;
 use tokio::time::sleep;
 
@@ -45,7 +45,7 @@ pub async fn i2c_imu() -> Result<(), Error> {
     dev.smbus_write_byte_data(LSM9DS1_CTRL_REG1_G, 0b10111000)?;
     dev.smbus_write_byte_data(LSM9DS1_ORIENT_CFG_G, 0b10111000)?;
 
-    sleep(Duration::from_secs(1));
+    let _ = sleep(Duration::from_secs(1)).await;
 
     loop {
         let acc_raw = dev.smbus_read_i2c_block_data(LSM6DSL_OUTX_L_XL, 6)?;
