@@ -1,35 +1,51 @@
+# paft-run
 
+## QNN/HTP Setup (QCS6490 / RubikPi 3)
 
-# Whisper 
+### Prerequisites
 
-file download
-```
-https://huggingface.co/ggerganov/whisper.cpp/blob/main/ggml-base.bin
-```
-
-to build on macos when getting enum or c++17 errors
 ```bash
-CC=/usr/bin/clang CXX=/usr/bin/clang++ cmake -B build -DCMAKE_CXX_FLAGS="-Wno-elaborated-enum-base" -DWHISPER_COREML=1 -DWHISPER_SDL2=ON
-cmake --build build --config Release
+sudo apt install qcom-fastrpc1 qcom-fastrpc-dev
 ```
 
-to run the streaming example with a custom vad
+### Build ONNX Runtime with QNN
+
 ```bash
-git fetch origin pull/3160/head:pr-3160-vad
-git checkout pr-3160-vad
-
-cmake --build build --config Release
-
-./build/bin/whisper-stream \
-  -m ./models/ggml-base.en.bin \
-  --vad \
-  --vad-model ./models/ggml-silero-v5.1.2.bin \
-  --vad-threshold 0.50 \
-  --vad-min-speech-duration-ms 80 \
-  --vad-min-silence-duration-ms 1200 \
-  --vad-speech-pad-ms 150 \
-  --step 500 --length 5000 --keep 300 \
-  -t 8 \
-  -np \
-  -f /dev/stdout
+git clone --recursive https://github.com/microsoft/onnxruntime.git
+cd onnxruntime && git checkout v1.23.2
+pip3 install -r requirements-dev.txt
+./build.sh --use_qnn --qnn_home ~/qnn-sdk --config Release --build_shared_lib --parallel --skip_tests
 ```
+
+### Install Libraries
+
+```bash
+sudo cp build/Linux/Release/libonnxruntime.so* /usr/local/lib/
+sudo cp build/Linux/Release/libonnxruntime_providers_shared.so /usr/local/lib/
+sudo cp build/Linux/Release/libonnxruntime_providers_qnn.so /usr/local/lib/
+sudo ln -sf /usr/local/lib/libonnxruntime.so.1.23.2 /usr/local/lib/libonnxruntime.so
+sudo ldconfig
+
+sudo mkdir -p /usr/lib/rfsa/adsp
+sudo cp ~/qnn-sdk/lib/hexagon-v68/unsigned/*.so /usr/lib/rfsa/adsp/
+```
+
+### Device Permissions
+
+```bash
+sudo chmod 666 /dev/fastrpc-cdsp /dev/fastrpc-cdsp-secure /dev/fastrpc-adsp-secure
+```
+
+### Environment
+
+```bash
+export LD_LIBRARY_PATH=~/qnn-sdk/lib/aarch64-ubuntu-gcc9.4:$LD_LIBRARY_PATH
+export ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp
+```
+
+### Validate
+
+```bash
+~/qnn-sdk/bin/aarch64-ubuntu-gcc9.4/qnn-platform-validator --backend dsp --testBackend
+```
+

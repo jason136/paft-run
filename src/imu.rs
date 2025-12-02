@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use tracing::info;
 use i2cdev::core::I2CDevice;
 use i2cdev::linux::LinuxI2CDevice;
 use tokio::time::sleep;
@@ -56,10 +57,10 @@ pub async fn i2c_imu() -> Result<(), Error> {
             gyr_z as f32 * gyr_scale,
         ];
 
-        println!(
-            "Acc (g): [{:.3}, {:.3}, {:.3}] | Gyr (dps): [{:.3}, {:.3}, {:.3}]",
-            acc[0], acc[1], acc[2], gyr[0], gyr[1], gyr[2]
-        );
+        // info!(
+        //     "Acc (g): [{:.3}, {:.3}, {:.3}] | Gyr (dps): [{:.3}, {:.3}, {:.3}]",
+        //     acc[0], acc[1], acc[2], gyr[0], gyr[1], gyr[2]
+        // );
 
         sleep(Duration::from_millis(100)).await;
     }

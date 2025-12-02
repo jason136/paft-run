@@ -1,5 +1,6 @@
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use cpal::traits::HostTrait;
 
 use crate::imu::i2c_imu;
 use crate::whisper::whisper_realtime;
@@ -14,33 +15,34 @@ async fn main() -> Result<(), Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tokio::spawn(i2c_imu()).await??;
+    let imu = tokio::spawn(i2c_imu());
 
-    Ok(())
+    info!("Starting Whisper Live Speech Recognition");
 
-    // info!("Starting Whisper Live Speech Recognition");
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or(Error::NoInputDeviceAvailable)?;
 
-    // let host = cpal::default_host();
-    // let device = host
-    //     .default_input_device()
-    //     .ok_or(Error::NoInputDeviceAvailable)?;
+    let (text_receiver, stream) = whisper_realtime(
+        "models/whisper-small-quantized/encoder-onnx/model.onnx",
+        "models/whisper-small-quantized/decoder-onnx/model.onnx",
+        "models/whisper-small-quantized/tokenizer.json",
+        device,
+    )?;
 
-    // let (text_receiver, stream) = whisper_realtime(
-    //     "models/whisper-small-encoder.onnx",
-    //     "models/whisper-small-decoder.onnx",
-    //     "models/whisper-small-tokenizer.json",
-    //     device,
-    // )?;
+    let transcription = tokio::spawn(async move {
+        while let Ok(text) = text_receiver.recv_async().await {
+            info!("Transcription: {}", text);
+        }
+    });
 
-    // while let Ok(text) = text_receiver.recv() {
-    //     info!("Transcription: {}", text);
-    // }
+    let _ = tokio::join!(imu, transcription);
 
-    // #[allow(unreachable_code)]
-    // {
-    //     drop(stream);
-    //     Ok(())
-    // }
+    {
+        drop(stream);
+        Ok(())
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -74,7 +76,5 @@ enum Error {
 
     #[error("Linux I2C error: {0}")]
     I2C(#[from] i2cdev::linux::LinuxI2CError),
-
-    #[error("IOCTL error: {0}")]
-    Ioctl(std::io::Error),
 }
+
