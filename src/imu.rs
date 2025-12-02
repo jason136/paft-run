@@ -2,7 +2,7 @@ use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
 use i2cdev::core::I2CDevice;
-use i2cdev::linux::{LinuxI2CDevice, LinuxI2CError};
+use i2cdev::linux::{LinuxI2CDevice, LinuxI2C};
 use nix::libc;
 use tokio::time::sleep;
 
@@ -33,7 +33,7 @@ pub async fn i2c_imu() -> Result<(), Error> {
     };
 
     if result < 0 {
-        return Err(Error::IoctlError(std::io::Error::last_os_error()));
+        return Err(Error::Ioctl(std::io::Error::last_os_error()));
     }
 
     // Enable the accelerometer
@@ -66,6 +66,6 @@ pub async fn i2c_imu() -> Result<(), Error> {
 
         println!("Acc: {:?}, Gyr: {:?}", acc_data, gyr_data);
 
-        sleep(Duration::from_millis(100)).await;
+        let _ = sleep(Duration::from_millis(100)).await;
     }
 }

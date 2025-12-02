@@ -15,7 +15,7 @@ async fn main() -> Result<(), Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tokio::spawn(i2c_imu());
+    tokio::spawn(i2c_imu()).await?;
 
     Ok(())
 
@@ -47,32 +47,32 @@ async fn main() -> Result<(), Error> {
 #[derive(thiserror::Error, Debug)]
 enum Error {
     #[error("ONNX Runtime error: {0}")]
-    OnnxRuntimeError(#[from] ort::Error),
+    OnnxRuntime(#[from] ort::Error),
 
     #[error("Tokenizer error: {0}")]
-    TokenizerError(#[from] tokenizers::Error),
+    Tokenizer(#[from] tokenizers::Error),
 
     #[error("Default input device error: {0}")]
-    DefaultInputDeviceError(#[from] cpal::DefaultStreamConfigError),
+    DefaultInputDevice(#[from] cpal::DefaultStreamConfigError),
 
     #[error("No input device available")]
     NoInputDeviceAvailable,
 
     #[error("Audio device name error: {0}")]
-    DeviceNameError(#[from] cpal::DeviceNameError),
+    DeviceName(#[from] cpal::DeviceNameError),
 
     #[error("Build audio stream error: {0}")]
-    BuildAudioStreamError(#[from] cpal::BuildStreamError),
+    BuildAudioStream(#[from] cpal::BuildStreamError),
 
     #[error("Play audio stream error: {0}")]
-    PlayAudioStreamError(#[from] cpal::PlayStreamError),
+    PlayAudioStream(#[from] cpal::PlayStreamError),
 
     #[error("Shape error: {0}")]
-    ShapeError(#[from] ndarray::ShapeError),
+    Shape(#[from] ndarray::ShapeError),
 
     #[error("Linux I2C error: {0}")]
-    I2CError(#[from] i2cdev::linux::LinuxI2CError),
+    I2C(#[from] i2cdev::linux::LinuxI2CError),
 
     #[error("IOCTL error: {0}")]
-    IoctlError(std::io::Error),
+    Ioctl(std::io::Error),
 }
