@@ -1,8 +1,9 @@
 [build]
 [target.aarch64-unknown-linux-gnu]
 pre-build = [
+    "dpkg --add-architecture arm64",
     "apt-get update",
-    "apt-get install -y libssl-dev pkg-config libasound2-dev ca-certificates"
+    "apt-get install -y libssl-dev:arm64 pkg-config libasound2-dev:arm64 ca-certificates"
 ]
 
 [target.aarch64-unknown-linux-gnu.env]
