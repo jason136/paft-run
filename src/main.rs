@@ -1,6 +1,6 @@
+use cpal::traits::{DeviceTrait, HostTrait};
 use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use cpal::traits::HostTrait;
 
 use crate::imu::i2c_imu;
 use crate::whisper::whisper_realtime;
@@ -21,8 +21,23 @@ async fn main() -> Result<(), Error> {
 
     let host = cpal::default_host();
     let device = host
-        .default_input_device()
+        .devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.name().unwrap().contains("pipewire"))
         .ok_or(Error::NoInputDeviceAvailable)?;
+
+    let devices = host.devices();
+
+    for dev in devices.unwrap() {
+        println!("Device: {}", dev.name()?);
+    }
+
+    // println!("Using input device: {}", device.name()?);
+    // println!("Using input device: {:?}", device.default_input_config()?);
+    // println!("Using input device: {:?}", device.default_output_config()?);
+
+    // return Ok(());
 
     let (text_receiver, stream) = whisper_realtime(
         "models/whisper-small-quantized/encoder-onnx/model.onnx",
@@ -77,4 +92,3 @@ enum Error {
     #[error("Linux I2C error: {0}")]
     I2C(#[from] i2cdev::linux::LinuxI2CError),
 }
-

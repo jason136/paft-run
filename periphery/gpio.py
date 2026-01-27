@@ -47,9 +47,9 @@ try:
         #time.sleep(0.5)
 
 except KeyboardInterrupt:
-    for p in [IN1, IN2, IN3, IN4]:
+    for p in [in1, in2, in3, in4]:
         p.write(False)
 
 finally:
-    for p in [IN1, IN2, IN3, IN4]:
+    for p in [in1, in2, in3, in4]:
         p.close()
