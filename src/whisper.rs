@@ -16,7 +16,9 @@ use ringbuf::{
     traits::{Consumer, RingBuffer},
     HeapRb,
 };
-use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 use rustfft::{num_complex::Complex, FftPlanner};
 use tokenizers::Tokenizer;
 use tracing::{info, warn};
@@ -108,7 +110,6 @@ impl WhisperModel {
 
         info!("Models loaded successfully!");
 
-        // Print model info
         info!(
             "Encoder inputs: {:?}",
             encoder.inputs.iter().map(|i| &i.name).collect::<Vec<_>>()
@@ -430,11 +431,7 @@ impl WhisperModel {
 fn audio_to_mel_spectrogram(audio: &[f32]) -> Result<Array2<f32>, Error> {
     // Pad or truncate audio to expected length
     let mut padded_audio = audio.to_vec();
-    if padded_audio.len() < N_SAMPLES {
-        padded_audio.resize(N_SAMPLES, 0.0);
-    } else if padded_audio.len() > N_SAMPLES {
-        padded_audio.truncate(N_SAMPLES);
-    }
+    padded_audio.resize(N_SAMPLES, 0.0);
 
     // Calculate frames we can compute from audio
     let computable_frames = (padded_audio.len() - N_FFT) / HOP_LENGTH + 1;
@@ -538,14 +535,17 @@ pub fn whisper_realtime(
 
     let input_sample_rate = config.sample_rate().0;
     let input_channels = config.channels() as usize;
-    
-    info!("Capturing at {} Hz, {} channels, will resample to {} Hz mono", 
-          input_sample_rate, input_channels, SAMPLE_RATE);
+
+    info!(
+        "Capturing at {} Hz, {} channels, will resample to {} Hz mono",
+        input_sample_rate, input_channels, SAMPLE_RATE
+    );
 
     // Calculate buffer size for input audio (at native rate)
-    let input_samples_needed = (N_SAMPLES as f64 * input_sample_rate as f64 / SAMPLE_RATE as f64) as usize;
+    let input_samples_needed =
+        (N_SAMPLES as f64 * input_sample_rate as f64 / SAMPLE_RATE as f64) as usize;
     let input_buffer_size = input_samples_needed * input_channels;
-    
+
     let buffer = Arc::new(Mutex::new(HeapRb::<f32>::new(input_buffer_size)));
     let buffer_producer = buffer.clone();
     let buffer_consumer = buffer.clone();
@@ -572,28 +572,30 @@ pub fn whisper_realtime(
     stream.play()?;
 
     let (audio_chunk_sender, audio_chunk_receiver) = flume::unbounded();
-    
+
     // Spawn task to read, convert stereo->mono, resample, and send chunks
     tokio::task::spawn(async move {
         let mut chunk = vec![0.0f32; input_buffer_size];
-        
+
         // Create resampler (only if needed)
         let resample_ratio = SAMPLE_RATE as f64 / input_sample_rate as f64;
         let mut resampler = if input_sample_rate != SAMPLE_RATE {
-            let params = SincInterpolationParameters {
-                sinc_len: 256,
-                f_cutoff: 0.95,
-                interpolation: SincInterpolationType::Linear,
-                oversampling_factor: 256,
-                window: WindowFunction::BlackmanHarris2,
-            };
-            Some(SincFixedIn::<f32>::new(
-                resample_ratio,
-                2.0, // max relative ratio
-                params,
-                input_samples_needed / input_channels,
-                1, // mono output
-            ).expect("Failed to create resampler"))
+            Some(
+                SincFixedIn::<f32>::new(
+                    resample_ratio,
+                    2.0, // max relative ratio
+                    SincInterpolationParameters {
+                        sinc_len: 256,
+                        f_cutoff: 0.95,
+                        interpolation: SincInterpolationType::Linear,
+                        oversampling_factor: 256,
+                        window: WindowFunction::BlackmanHarris2,
+                    },
+                    input_samples_needed / input_channels,
+                    1, // mono output
+                )
+                .expect("Failed to create resampler"),
+            )
         } else {
             None
         };
@@ -606,12 +608,13 @@ pub fn whisper_realtime(
                 audio_consumer.peek_slice(&mut chunk);
 
                 // Check energy (on raw samples)
-                let energy: f64 = chunk.iter().map(|x| (*x as f64) * (*x as f64)).sum();
-                
+                let energy: f64 = chunk.iter().map(|x| (*x as f64).powi(2)).sum();
+
                 if energy > 100.0 {
                     // Convert stereo to mono
                     let mono: Vec<f32> = if input_channels == 2 {
-                        chunk.chunks(2)
+                        chunk
+                            .chunks(2)
                             .map(|pair| (pair[0] + pair.get(1).unwrap_or(&0.0)) / 2.0)
                             .collect()
                     } else if input_channels == 1 {
@@ -622,7 +625,7 @@ pub fn whisper_realtime(
                     };
 
                     // Resample if needed
-                    let resampled = if let Some(ref mut rs) = resampler {
+                    let mut resampled = if let Some(ref mut rs) = resampler {
                         let input = vec![mono];
                         match rs.process(&input, None) {
                             Ok(output) => output.into_iter().next().unwrap_or_default(),
@@ -635,15 +638,9 @@ pub fn whisper_realtime(
                         mono
                     };
 
-                    // Pad or truncate to exactly N_SAMPLES
-                    let mut final_audio = resampled;
-                    if final_audio.len() < N_SAMPLES {
-                        final_audio.resize(N_SAMPLES, 0.0);
-                    } else if final_audio.len() > N_SAMPLES {
-                        final_audio.truncate(N_SAMPLES);
-                    }
+                    resampled.resize(N_SAMPLES, 0.0);
 
-                    let _ = audio_chunk_sender.send(final_audio);
+                    let _ = audio_chunk_sender.send(resampled);
                     audio_consumer.clear();
                 }
             }

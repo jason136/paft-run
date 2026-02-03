@@ -1,21 +1,33 @@
 use cpal::traits::{DeviceTrait, HostTrait};
-use tracing::{info, level_filters::LevelFilter};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tokio::time::sleep;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-use crate::imu::i2c_imu;
-use crate::whisper::whisper_realtime;
+use crate::{imu::Imu, whisper::whisper_realtime};
 
 mod imu;
+mod servo;
 mod whisper;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    tracing_subscriber::registry()
-        .with(LevelFilter::INFO)
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(EnvFilter::from_default_env())
+        .finish();
 
-    let imu = tokio::spawn(i2c_imu());
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
+    tokio::spawn(async move {
+        let mut imu = Imu::new().await?;
+
+        while let Ok((acc, gyr)) = imu.sample() {
+            println!("Acc: {:?}, Gyr: {:?}", acc, gyr);
+
+            sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        Ok::<_, Error>(())
+    });
 
     info!("Starting Whisper Live Speech Recognition");
 
@@ -48,11 +60,11 @@ async fn main() -> Result<(), Error> {
 
     let transcription = tokio::spawn(async move {
         while let Ok(text) = text_receiver.recv_async().await {
-            info!("Transcription: {}", text);
+            tracing::warn!("Transcription: {}", text);
         }
     });
 
-    let _ = tokio::join!(imu, transcription);
+    transcription.await?;
 
     {
         drop(stream);
@@ -91,4 +103,7 @@ enum Error {
 
     #[error("Linux I2C error: {0}")]
     I2C(#[from] i2cdev::linux::LinuxI2CError),
+
+    #[error("GPIO error: {0}")]
+    GPIO(#[from] gpio_cdev::Error),
 }

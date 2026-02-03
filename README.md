@@ -49,3 +49,13 @@ export ADSP_LIBRARY_PATH=/usr/lib/rfsa/adsp
 ~/qnn-sdk/bin/aarch64-ubuntu-gcc9.4/qnn-platform-validator --backend dsp --testBackend
 ```
 
+### Audio Visualization
+
+```bash
+cava
+```
+
+### Audio Playback 
+```bash 
+paplay <file>
+```
