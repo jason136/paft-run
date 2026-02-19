@@ -5,6 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "elevenlabs[pyaudio]",
+    "huggingface-hub>=0.25.0",
+    "onnx>=1.16.0",
     "python-periphery>=2.4.1",
     "qai-hub>=0.44.0",
     "qai-hub-models[yolov11-det]>=0.45.0",

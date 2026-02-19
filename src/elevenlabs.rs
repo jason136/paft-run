@@ -1,13 +1,10 @@
-use std::sync::{Arc, Mutex};
-
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::process::{Child, Command};
-use tracing::{info, warn};
+use tokio::task::JoinHandle;
+use tracing::info;
 
-use crate::imu::Imu;
-use crate::servo::Servos;
 use crate::Error;
 
 const SOCKET_PATH: &str = "/tmp/paft-agent.sock";
@@ -21,12 +18,15 @@ pub struct Agent {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "method")]
 enum Request {
-    DetectImage,
+    UseVision,
 }
 
 #[derive(Serialize)]
-struct Response {
-    error: Option<String>,
+#[serde(rename_all = "snake_case")]
+#[serde(tag = "result")]
+enum Response {
+    Success { value: serde_json::Value },
+    Error { message: String },
 }
 
 impl Agent {
@@ -38,30 +38,37 @@ impl Agent {
 
         let tool_handler_handle = tokio::spawn(async move {
             loop {
-                let (stream, _addr) = listener.accept().await?;
-                info!("Agent connected");
+                let (mut stream, _addr) = listener.accept().await?;
+                info!("Agent tool connection");
 
-                let (reader, mut writer) = stream.into_split();
-                let mut lines = BufReader::new(reader).lines();
+                tokio::spawn(async move {
+                    let (reader, mut writer) = stream.split();
+                    let mut lines = BufReader::new(reader).lines();
 
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let Ok(request) = serde_json::from_str::<Request>(&line) else {
-                        tracing::warn!("Invalid request: {line}");
-                        continue;
-                    };
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        let response = match serde_json::from_str::<Request>(&line) {
+                            Ok(request) => match request {
+                                Request::UseVision => Response::Success {
+                                    value: serde_json::json!({"detected": []}),
+                                },
+                            },
+                            Err(e) => Response::Error {
+                                message: format!("invalid request: {e}"),
+                            },
+                        };
 
-                    match request {
-                        Request::DetectImage => {
-                            tracing::warn!("Detecting image not implemented");
-                        }
+                        let mut buf = serde_json::to_vec(&response).unwrap();
+                        buf.push(b'\n');
+                        let _ = writer.write_all(&buf).await;
                     }
-                }
-
-                info!("Agent disconnected");
+                });
             }
         });
 
-        let process = Command::new("elevenlabs").arg("tool-handler").spawn()?;
+        let process = Command::new("uv")
+            .arg("run")
+            .arg("src/python/elevenlabs.py")
+            .spawn()?;
 
         Ok(Agent {
             process,

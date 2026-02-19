@@ -1,2 +1,4 @@
 /target
-/models
+/models/**/*.onnx
+/models/**/*.bin
+imagenette_samples/
