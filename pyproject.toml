@@ -6,5 +6,6 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "python-periphery>=2.4.1",
+    "qai-hub>=0.44.0",
     "qai-hub-models[yolov11-det]>=0.45.0",
 ]

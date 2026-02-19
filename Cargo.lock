@@ -1254,6 +1254,8 @@ dependencies = [
  "ringbuf",
  "rubato",
  "rustfft",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",

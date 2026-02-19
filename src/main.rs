@@ -5,6 +5,7 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 use crate::{imu::Imu, whisper::whisper_realtime};
 
+mod elevenlabs;
 mod imu;
 mod servo;
 mod whisper;
@@ -106,4 +107,10 @@ enum Error {
 
     #[error("GPIO error: {0}")]
     GPIO(#[from] gpio_cdev::Error),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
 }
