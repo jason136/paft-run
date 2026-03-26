@@ -1,40 +1,70 @@
-import json
+import base64
 import os
 import signal
-import socket
+import subprocess
+import tempfile
+
+from openai import OpenAI
 
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import Conversation, ClientTools
 from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInterface
 
-SOCKET_PATH = "/tmp/paft-agent.sock"
+IMAGE_PATH = os.path.join(tempfile.gettempdir(), "paft_capture.jpg")
 
-
-def call_rust(method: str, **params) -> str:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(SOCKET_PATH)
-    try:
-        request = json.dumps({"method": method, **params}) + "\n"
-        sock.sendall(request.encode())
-
-        buf = b""
-        while not buf.endswith(b"\n"):
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            buf += chunk
-
-        response = json.loads(buf.decode())
-        if response.get("result") == "error":
-            raise RuntimeError(response.get("message", "unknown error"))
-
-        return json.dumps(response.get("value", {}))
-    finally:
-        sock.close()
+openai_client = OpenAI()
 
 
 def use_vision(parameters: dict) -> str:
-    return call_rust("use_vision")
+    try:
+        subprocess.run(
+            [
+                "gst-launch-1.0",
+                "-e",
+                "qtiqmmfsrc",
+                "camera=0",
+                "!",
+                "video/x-raw,format=NV12,width=1280,height=720,framerate=30/1",
+                "!",
+                "jpegenc",
+                "!",
+                "multifilesink",
+                f"location={IMAGE_PATH}",
+                "max-files=1",
+            ],
+            timeout=3,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        with open(IMAGE_PATH, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe what you see in this image concisely.",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+            max_tokens=256,
+        )
+        return response.choices[0].message.content
+
+    except subprocess.TimeoutExpired:
+        return "Error: camera capture timed out"
+    except Exception as e:
+        return f"Error: {e}"
 
 
 def main():

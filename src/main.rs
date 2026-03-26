@@ -5,9 +5,9 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 use crate::{imu::Imu, whisper::whisper_realtime};
 
+mod actuators;
 mod elevenlabs;
 mod imu;
-mod servo;
 mod whisper;
 
 #[tokio::main]
@@ -18,7 +18,13 @@ async fn main() -> Result<(), Error> {
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    tokio::spawn(async move {
+    let agent = tokio::spawn(async move {
+        let agent = elevenlabs::Agent::spawn().await?;
+
+        Ok::<_, Error>(agent)
+    });
+
+    let imu = tokio::spawn(async move {
         let mut imu = Imu::new().await?;
 
         while let Ok((acc, gyr)) = imu.sample() {

@@ -67,7 +67,8 @@ impl Agent {
 
         let process = Command::new("uv")
             .arg("run")
-            .arg("src/python/elevenlabs.py")
+            .arg("src/python/elevenlabs_agent.py")
+            .kill_on_drop(true)
             .spawn()?;
 
         Ok(Agent {
