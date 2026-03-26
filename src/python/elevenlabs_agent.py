@@ -1,14 +1,21 @@
 import base64
 import os
 import signal
-import subprocess
 import tempfile
+
+import gi
+
+gi.require_version("Gst", "1.0")
+gi.require_version("GstApp", "1.0")
+from gi.repository import Gst, GstApp
 
 from openai import OpenAI
 
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import Conversation, ClientTools
 from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInterface
+
+Gst.init(None)
 
 IMAGE_PATH = os.path.join(tempfile.gettempdir(), "paft_capture.jpg")
 
@@ -17,28 +24,30 @@ openai_client = OpenAI()
 
 def use_vision() -> str:
     try:
-        subprocess.run(
-            [
-                "gst-launch-1.0",
-                "-e",
-                "qtiqmmfsrc",
-                "camera=0",
-                "!",
-                "video/x-raw,format=NV12,width=1280,height=720,framerate=30/1",
-                "!",
-                "jpegenc",
-                "!",
-                "multifilesink",
-                f"location={IMAGE_PATH}",
-                "max-files=1",
-            ],
-            timeout=3,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        pipeline = Gst.parse_launch(
+            "qtiqmmfsrc camera=0 ! "
+            "video/x-raw,format=NV12,width=1280,height=720,framerate=30/1 ! "
+            "jpegenc ! "
+            "appsink name=sink emit-signals=false max-buffers=1 drop=true"
         )
+        pipeline.set_state(Gst.State.PLAYING)
 
-        with open(IMAGE_PATH, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
+        sink = pipeline.get_by_name("sink")
+
+        for _ in range(10):
+            sample = sink.try_pull_sample(5 * Gst.SECOND)
+            if sample is None:
+                pipeline.set_state(Gst.State.NULL)
+                return "Error: camera failed to capture an image"
+
+        buf = sample.get_buffer()
+        ok, mapinfo = buf.map(Gst.MapFlags.READ)
+        jpeg_bytes = bytes(mapinfo.data)
+        buf.unmap(mapinfo)
+
+        pipeline.set_state(Gst.State.NULL)
+
+        b64 = base64.b64encode(jpeg_bytes).decode()
 
         response = openai_client.chat.completions.create(
             model="gpt-5.4-nano",
@@ -57,13 +66,10 @@ def use_vision() -> str:
                     ],
                 }
             ],
-            reasoning={"effort": "none"},
-            max_tokens=128,
+            reasoning_effort="none",
         )
         return response.choices[0].message.content
 
-    except subprocess.TimeoutExpired:
-        return "Error: camera capture timed out"
     except Exception as e:
         return f"Error: {e}"
 
@@ -96,4 +102,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+
+    print(use_vision())
