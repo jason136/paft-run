@@ -15,7 +15,7 @@ IMAGE_PATH = os.path.join(tempfile.gettempdir(), "paft_capture.jpg")
 openai_client = OpenAI()
 
 
-def use_vision(parameters: dict) -> str:
+def use_vision() -> str:
     try:
         subprocess.run(
             [
@@ -41,7 +41,7 @@ def use_vision(parameters: dict) -> str:
             b64 = base64.b64encode(f.read()).decode()
 
         response = openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.4-nano",
             messages=[
                 {
                     "role": "user",
@@ -57,7 +57,8 @@ def use_vision(parameters: dict) -> str:
                     ],
                 }
             ],
-            max_tokens=256,
+            reasoning={"effort": "none"},
+            max_tokens=128,
         )
         return response.choices[0].message.content
 
