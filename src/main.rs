@@ -1,13 +1,11 @@
-use cpal::traits::{DeviceTrait, HostTrait};
-use tokio::time::sleep;
-use tracing::info;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-use crate::{imu::Imu, whisper::whisper_realtime};
+use crate::{actuators::Actuators, teleop::spawn_stdin_teleop};
 
 mod actuators;
 mod elevenlabs;
 mod imu;
+mod teleop;
 mod whisper;
 
 #[tokio::main]
@@ -18,39 +16,37 @@ async fn main() -> Result<(), Error> {
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
 
-    let agent = tokio::spawn(async move {
-        let agent = elevenlabs::Agent::spawn().await?;
+    // let agent = tokio::spawn(async move {
+    //     let agent = elevenlabs::ElevenLabsAgent::spawn().await?;
 
-        Ok::<_, Error>(agent)
-    });
+    //     Ok::<_, Error>(agent)
+    // });
 
-    let imu = tokio::spawn(async move {
-        let mut imu = Imu::new().await?;
+    // let imu = tokio::spawn(async move {
+    //     let mut imu = Imu::new().await?;
 
-        while let Ok((acc, gyr)) = imu.sample() {
-            println!("Acc: {:?}, Gyr: {:?}", acc, gyr);
+    //     while let Ok((acc, gyr)) = imu.sample() {
+    //         println!("Acc: {:?}, Gyr: {:?}", acc, gyr);
 
-            sleep(std::time::Duration::from_millis(100)).await;
-        }
+    //         sleep(std::time::Duration::from_millis(100)).await;
+    //     }
 
-        Ok::<_, Error>(())
-    });
+    //     Ok::<_, Error>(())
+    // });
 
-    info!("Starting Whisper Live Speech Recognition");
+    // info!("Starting Whisper Live Speech Recognition");
 
-    let host = cpal::default_host();
-    let device = host
-        .devices()
-        .unwrap()
-        .into_iter()
-        .find(|d| d.name().unwrap().contains("pipewire"))
-        .ok_or(Error::NoInputDeviceAvailable)?;
+    // let host = cpal::default_host();
+    // let device = host
+    //     .default_input_device()
+    //     .ok_or(Error::NoInputDeviceAvailable)?;
+    // eprintln!("[main] Using input device: {}", device.name()?);
 
-    let devices = host.devices();
+    // let devices = host.devices();
 
-    for dev in devices.unwrap() {
-        println!("Device: {}", dev.name()?);
-    }
+    // for dev in devices.unwrap() {
+    //     println!("Device: {}", dev.name()?);
+    // }
 
     // println!("Using input device: {}", device.name()?);
     // println!("Using input device: {:?}", device.default_input_config()?);
@@ -58,25 +54,30 @@ async fn main() -> Result<(), Error> {
 
     // return Ok(());
 
-    let (text_receiver, stream) = whisper_realtime(
-        "models/whisper-small-quantized/encoder-onnx/model.onnx",
-        "models/whisper-small-quantized/decoder-onnx/model.onnx",
-        "models/whisper-small-quantized/tokenizer.json",
-        device,
-    )?;
+    // let (text_receiver, stream) = whisper_realtime(
+    //     "models/whisper-small-quantized/encoder-onnx/model.onnx",
+    //     "models/whisper-small-quantized/decoder-onnx/model.onnx",
+    //     "models/whisper-small-quantized/tokenizer.json",
+    //     device,
+    // )?;
 
-    let transcription = tokio::spawn(async move {
-        while let Ok(text) = text_receiver.recv_async().await {
-            tracing::warn!("Transcription: {}", text);
-        }
-    });
+    // let transcription = tokio::spawn(async move {
+    //     while let Ok(text) = text_receiver.recv_async().await {
+    //         eprintln!("[whisper] Transcription: {}", text);
+    //     }
+    // });
 
-    transcription.await?;
+    // transcription.await?;
 
-    {
-        drop(stream);
-        Ok(())
-    }
+    let actuators = Actuators::new()?;
+    spawn_stdin_teleop(actuators).await.unwrap();
+
+    // {
+    //     drop(stream);
+    //     Ok(())
+    // }
+
+    Ok(())
 }
 
 #[derive(thiserror::Error, Debug)]

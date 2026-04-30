@@ -17,7 +17,8 @@ from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInt
 
 Gst.init(None)
 
-IMAGE_PATH = os.path.join(tempfile.gettempdir(), "paft_capture.jpg")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_PATH = os.path.join(BASE_DIR, "paft_capture.jpg")
 
 openai_client = OpenAI()
 
@@ -102,6 +103,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # main()
+    main()
 
-    print(use_vision())
+    # print(use_vision())

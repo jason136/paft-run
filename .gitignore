@@ -3,3 +3,6 @@
 /models/**/*.bin
 imagenette_samples/
 *.pyc
+paft_capture.jpg
+paft_capture.mp4
+PAFT Electrical.pdf

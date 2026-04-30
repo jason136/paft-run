@@ -9,7 +9,7 @@ use crate::Error;
 
 const SOCKET_PATH: &str = "/tmp/paft-agent.sock";
 
-pub struct Agent {
+pub struct ElevenLabsAgent {
     process: Child,
     tool_handler_handle: JoinHandle<Result<(), Error>>,
 }
@@ -17,9 +17,7 @@ pub struct Agent {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "method")]
-enum Request {
-    UseVision,
-}
+enum Request {}
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,7 +27,7 @@ enum Response {
     Error { message: String },
 }
 
-impl Agent {
+impl ElevenLabsAgent {
     pub async fn spawn() -> Result<Self, Error> {
         let _ = std::fs::remove_file(SOCKET_PATH);
 
@@ -47,11 +45,7 @@ impl Agent {
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let response = match serde_json::from_str::<Request>(&line) {
-                            Ok(request) => match request {
-                                Request::UseVision => Response::Success {
-                                    value: serde_json::json!({"detected": []}),
-                                },
-                            },
+                            Ok(request) => match request {},
                             Err(e) => Response::Error {
                                 message: format!("invalid request: {e}"),
                             },
@@ -71,7 +65,7 @@ impl Agent {
             .kill_on_drop(true)
             .spawn()?;
 
-        Ok(Agent {
+        Ok(ElevenLabsAgent {
             process,
             tool_handler_handle,
         })

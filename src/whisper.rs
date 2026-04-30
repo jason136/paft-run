@@ -90,25 +90,25 @@ struct WhisperModel {
 
 impl WhisperModel {
     fn new(encoder_path: &str, decoder_path: &str, tokenizer_path: &str) -> Result<Self, Error> {
-        info!("Initializing ONNX Runtime...");
+        eprintln!("[whisper] Initializing ONNX Runtime...");
         ort::init()
             .with_name("whisper")
             .with_execution_providers([QNNExecutionProvider::default().build()])
             .commit()?;
 
-        info!("Loading encoder from: {}", encoder_path);
+        eprintln!("[whisper] Loading encoder from: {}", encoder_path);
         let encoder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(4)?
             .commit_from_file(encoder_path)?;
 
-        info!("Loading decoder from: {}", decoder_path);
+        eprintln!("[whisper] Loading decoder from: {}", decoder_path);
         let decoder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(4)?
             .commit_from_file(decoder_path)?;
 
-        info!("Models loaded successfully!");
+        eprintln!("[whisper] Models loaded successfully!");
 
         info!(
             "Encoder inputs: {:?}",
@@ -285,19 +285,6 @@ impl WhisperModel {
             .map(|(idx, _)| idx as i64)
             .unwrap_or(EOT_TOKEN);
 
-        // // Log output names on first call to verify cache output order
-        // if state.position == 0 {
-        //     info!(
-        //         "Decoder has {} outputs: {:?}",
-        //         outputs.len(),
-        //         self.decoder
-        //             .outputs
-        //             .iter()
-        //             .map(|o| &o.name)
-        //             .collect::<Vec<_>>()
-        //     );
-        // }
-
         // Update self-attention caches from decoder outputs
         // Outputs should contain k_cache_self_*_out and v_cache_self_*_out
         for i in 0..NUM_LAYERS {
@@ -456,8 +443,8 @@ fn audio_to_mel_spectrogram(audio: &[f32]) -> Result<Array2<f32>, Error> {
             .iter()
             .enumerate()
             .map(|(j, &x)| {
-                let window = 0.5
-                    * (1.0 - (2.0 * std::f32::consts::PI * j as f32 / (N_FFT - 1) as f32).cos());
+                let window =
+                    0.5 * (1.0 - (2.0 * std::f32::consts::PI * j as f32 / N_FFT as f32).cos());
                 Complex::new(x * window, 0.0)
             })
             .collect();
@@ -487,7 +474,7 @@ fn audio_to_mel_spectrogram(audio: &[f32]) -> Result<Array2<f32>, Error> {
 /// Load the exact mel filterbank from Whisper (extracted from librosa)
 /// Shape: [80, 201] - 80 mel bins, 201 FFT bins (N_FFT/2 + 1)
 fn load_mel_filterbank() -> Array2<f32> {
-    const MEL_FILTERS_DATA: &str = include_str!("mel_filters_80.txt");
+    const MEL_FILTERS_DATA: &str = include_str!("bin/mel_filters_80.txt");
     const N_FFT_BINS: usize = N_FFT / 2 + 1; // 201
 
     let values: Vec<f32> = MEL_FILTERS_DATA
@@ -536,8 +523,8 @@ pub fn whisper_realtime(
     let input_sample_rate = config.sample_rate().0;
     let input_channels = config.channels() as usize;
 
-    info!(
-        "Capturing at {} Hz, {} channels, will resample to {} Hz mono",
+    eprintln!(
+        "[whisper] Capturing at {} Hz, {} channels, will resample to {} Hz mono",
         input_sample_rate, input_channels, SAMPLE_RATE
     );
 
@@ -557,6 +544,9 @@ pub fn whisper_realtime(
         buffer_size: cpal::BufferSize::Default,
     };
 
+    // Load models BEFORE starting audio stream to avoid ALSA overrun
+    let mut model = WhisperModel::new(encoder_path, decoder_path, tokenizer_path)?;
+
     let stream = audio_device.build_input_stream(
         &stream_config,
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -564,26 +554,27 @@ pub fn whisper_realtime(
             rb.push_slice_overwrite(data);
         },
         |err| {
-            warn!("Audio stream error: {}", err);
+            eprintln!("[whisper] Audio stream error: {}", err);
         },
         None,
     )?;
 
     stream.play()?;
+    eprintln!("[whisper] Audio stream started, waiting for speech...");
 
     let (audio_chunk_sender, audio_chunk_receiver) = flume::unbounded();
+    let (text_sender, text_receiver) = flume::unbounded();
 
     // Spawn task to read, convert stereo->mono, resample, and send chunks
     tokio::task::spawn(async move {
         let mut chunk = vec![0.0f32; input_buffer_size];
 
-        // Create resampler (only if needed)
         let resample_ratio = SAMPLE_RATE as f64 / input_sample_rate as f64;
         let mut resampler = if input_sample_rate != SAMPLE_RATE {
             Some(
                 SincFixedIn::<f32>::new(
                     resample_ratio,
-                    2.0, // max relative ratio
+                    2.0,
                     SincInterpolationParameters {
                         sinc_len: 256,
                         f_cutoff: 0.95,
@@ -591,8 +582,8 @@ pub fn whisper_realtime(
                         oversampling_factor: 256,
                         window: WindowFunction::BlackmanHarris2,
                     },
-                    input_samples_needed / input_channels,
-                    1, // mono output
+                    input_samples_needed,
+                    1,
                 )
                 .expect("Failed to create resampler"),
             )
@@ -600,18 +591,25 @@ pub fn whisper_realtime(
             None
         };
 
+        let mut poll_count: u64 = 0;
         loop {
             chunk.fill(0.0);
 
             {
                 let mut audio_consumer = buffer_consumer.lock().unwrap();
-                audio_consumer.peek_slice(&mut chunk);
+                let peeked = audio_consumer.peek_slice(&mut chunk);
 
-                // Check energy (on raw samples)
                 let energy: f64 = chunk.iter().map(|x| (*x as f64).powi(2)).sum();
 
+                poll_count += 1;
+                if poll_count % 500 == 0 {
+                    eprintln!(
+                        "[whisper] audio poll #{}: buffer has {} samples, energy = {:.2}",
+                        poll_count, peeked, energy
+                    );
+                }
+
                 if energy > 100.0 {
-                    // Convert stereo to mono
                     let mono: Vec<f32> = if input_channels == 2 {
                         chunk
                             .chunks(2)
@@ -620,17 +618,15 @@ pub fn whisper_realtime(
                     } else if input_channels == 1 {
                         chunk.clone()
                     } else {
-                        // Take first channel for multi-channel
                         chunk.iter().step_by(input_channels).copied().collect()
                     };
 
-                    // Resample if needed
                     let mut resampled = if let Some(ref mut rs) = resampler {
                         let input = vec![mono];
                         match rs.process(&input, None) {
                             Ok(output) => output.into_iter().next().unwrap_or_default(),
                             Err(e) => {
-                                warn!("Resample error: {}", e);
+                                eprintln!("[whisper] Resample error: {}", e);
                                 continue;
                             }
                         }
@@ -640,6 +636,11 @@ pub fn whisper_realtime(
 
                     resampled.resize(N_SAMPLES, 0.0);
 
+                    eprintln!(
+                        "[whisper] sending chunk: {} mono samples, energy = {:.2}",
+                        resampled.len(),
+                        energy
+                    );
                     let _ = audio_chunk_sender.send(resampled);
                     audio_consumer.clear();
                 }
@@ -649,23 +650,17 @@ pub fn whisper_realtime(
         }
     });
 
-    let (text_sender, text_receiver) = flume::unbounded();
-
-    let mut model = WhisperModel::new(encoder_path, decoder_path, tokenizer_path)?;
-
     tokio::task::spawn_blocking(move || {
         while let Ok(chunk) = audio_chunk_receiver.recv() {
             match model.transcribe(&chunk) {
                 Ok(text) => {
+                    eprintln!("[whisper] Transcribed: {}", text);
                     let _ = text_sender.send(text);
-                    continue;
                 }
-                Err(e) => warn!("Error transcribing chunk: {}", e),
+                Err(e) => eprintln!("[whisper] Error transcribing chunk: {}", e),
             };
         }
     });
-
-    info!("Audio stream started");
 
     Ok((text_receiver, stream))
 }
